@@ -144,11 +144,14 @@ def sub_report_aum_table():
 
 # Sub-Report 2: Example with Text and Table
 from reportlab.platypus import Paragraph, Spacer, Table, PageBreak
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.colors import HexColor
 
 def sub_report_summary():
-    """Generates a sub-report with text and summary table only."""
+    """Generates a sub-report with text, summary table, and minimal line chart."""
     elements = []
     styles = getSampleStyleSheet()
 
@@ -175,7 +178,7 @@ def sub_report_summary():
     intro = Paragraph("Resumen de AUM por Fecha (Últimos 100 Días)", styles['Heading2'])
     elements.append(intro)
     elements.append(Spacer(1, 10))
-    elements.append(Paragraph("A continuación, se presenta un resumen del patrimonio total por fecha.", styles['Normal']))
+    elements.append(Paragraph("A continuación, se presenta un resumen del patrimonio total por fecha, seguido de un gráfico.", styles['Normal']))
     elements.append(Spacer(1, 5))
 
     # Summary table
@@ -197,6 +200,34 @@ def sub_report_summary():
     elements.append(table)
     elements.append(Spacer(1, 20))
     print("Summary: Table added")
+
+    # Minimal line chart
+    try:
+        drawing = Drawing(500, 200)
+        line_chart = HorizontalLineChart()
+        line_chart.x = 50
+        line_chart.y = 50
+        line_chart.width = 400
+        line_chart.height = 100
+
+        # Data
+        chart_data = [[float(row[1]) / 1e6 for row in data]]
+        line_chart.data = chart_data
+
+        # Minimal setup
+        line_chart.categoryAxis.visible = False  # No X-axis labels
+        line_chart.valueAxis.valueMin = 0
+        line_chart.valueAxis.labels.fontName = 'MS Sans Serif'
+        line_chart.valueAxis.labels.fontSize = 6
+        line_chart.lines[0].strokeColor = HexColor('#FF6600')
+        line_chart.lines[0].strokeWidth = 1
+
+        drawing.add(line_chart)
+        elements.append(drawing)
+        print("Summary: Chart added")
+    except Exception as e:
+        print(f"Summary: Chart error: {str(e)}")
+        elements.append(Paragraph(f"Chart failed: {str(e)}", styles['Normal']))
 
     elements.append(PageBreak())
     return elements
