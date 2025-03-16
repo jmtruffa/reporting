@@ -214,7 +214,6 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
             if sub_elements:
                 all_elements.extend(sub_elements)
                 print(f"{report_name}: Elements added ({len(sub_elements)}): {[type(e).__name__ for e in sub_elements]}")
-                # Extract fecha_value from the first Paragraph (title)
                 for elem in sub_elements:
                     if isinstance(elem, Paragraph) and "Fecha:" in elem.text:
                         fecha_match = re.search(r"Fecha: (\S+)", elem.text)
@@ -236,6 +235,7 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         print(f"Multi-report PDF generated: {output_file}")
     except Exception as e:
         print(f"Error during PDF build: {str(e)}")
+        # Fixed filter: Include Paragraph, Table, Spacer, PageBreak
         safe_elements = [e for e in all_elements if isinstance(e, (Paragraph, Table, Spacer, PageBreak))]
         print("Safe elements:", len(safe_elements), [type(e).__name__ for e in safe_elements])
         if safe_elements:
@@ -264,7 +264,7 @@ def main():
 
     # List of sub-report functions to include
     output_file = f"multi_report_aum_familia_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    sub_reports = [sub_report_aum_table]  # Only Aum Table
+    sub_reports = [sub_report_aum_table, sub_report_summary]  # Only Aum Table
     generate_multi_report_pdf(output_file, sub_reports)
 
 if __name__ == "__main__":
