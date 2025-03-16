@@ -60,9 +60,9 @@ def add_header_footer(canvas, doc):
     """Adds header with logo, title including fecha, and footer with page number."""
     canvas.saveState()
     canvas.drawImage("./brand_logo.png", 40, 740, width=100, height=45)
-    canvas.setFont("MS Sans Serif", 12)
+    canvas.setFont("MS Sans Serif", 10)
     fecha_value = getattr(doc, 'fecha_value', 'N/A')
-    canvas.drawString(40, 710, f"REPORTE DE AUM POR FONDO (cifras en millones). Información al: {fecha_value}")
+    canvas.drawString(160, 760, f"REPORTE DE AUM POR FONDO (cifras en millones). Información al: {fecha_value}")
     canvas.restoreState()
 
     canvas.saveState()
@@ -214,6 +214,14 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
             if sub_elements:
                 all_elements.extend(sub_elements)
                 print(f"{report_name}: Elements added ({len(sub_elements)}): {[type(e).__name__ for e in sub_elements]}")
+                # Extract fecha_value from the first Paragraph (title)
+                for elem in sub_elements:
+                    if isinstance(elem, Paragraph) and "Fecha:" in elem.text:
+                        fecha_match = re.search(r"Fecha: (\S+)", elem.text)
+                        if fecha_match:
+                            doc.fecha_value = fecha_match.group(1)
+                            print(f"{report_name}: Set doc.fecha_value to {doc.fecha_value}")
+                            break
         except Exception as e:
             print(f"Error in sub-report '{report_name}': {str(e)}")
             styles = getSampleStyleSheet()
@@ -228,7 +236,6 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         print(f"Multi-report PDF generated: {output_file}")
     except Exception as e:
         print(f"Error during PDF build: {str(e)}")
-        # Fallback: Explicitly include only safe elements
         safe_elements = [e for e in all_elements if isinstance(e, (Paragraph, Table, Spacer, PageBreak))]
         print("Safe elements:", len(safe_elements), [type(e).__name__ for e in safe_elements])
         if safe_elements:
