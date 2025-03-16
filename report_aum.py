@@ -215,7 +215,7 @@ def sub_report_summary():
         line_chart.data = chart_data
 
         # Minimal setup
-        line_chart.categoryAxis.visible = False  # No X-axis labels
+        line_chart.categoryAxis.visible = False
         line_chart.valueAxis.valueMin = 0
         line_chart.valueAxis.labels.fontName = 'MS Sans Serif'
         line_chart.valueAxis.labels.fontSize = 6
@@ -266,8 +266,8 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         print(f"Multi-report PDF generated: {output_file}")
     except Exception as e:
         print(f"Error during PDF build: {str(e)}")
-        # Fixed filter: Include Paragraph, Table, Spacer, PageBreak
-        safe_elements = [e for e in all_elements if isinstance(e, (Paragraph, Table, Spacer, PageBreak))]
+        # Fixed filter: Explicitly include expected types
+        safe_elements = [e for e in all_elements if type(e) in [Paragraph, Table, Spacer, PageBreak]]
         print("Safe elements:", len(safe_elements), [type(e).__name__ for e in safe_elements])
         if safe_elements:
             try:
