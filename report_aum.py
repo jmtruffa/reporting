@@ -10,6 +10,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Ima
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import matplotlib.pyplot as plt
+import tempfile  # Added here for global use
+import time
 
 # Load environment variables
 db_user = os.environ.get('POSTGRES_USER')
@@ -142,7 +144,7 @@ def sub_report_summary(report_date):
     """Generates a sub-report with text, summary table (newest first), and Matplotlib line chart."""
     elements = []
     styles = getSampleStyleSheet()
-    q_dias = 20
+    q_dias = 10
 
     # Query database (q_dias rows, newest first up to report_date)
     with engine.connect() as connection:
