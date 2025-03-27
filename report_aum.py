@@ -9,9 +9,6 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Image, Paragraph, PageBreak
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
-from reportlab.graphics.shapes import Drawing, String
-from reportlab.graphics.charts.barcharts import VerticalBarChart
-from reportlab.lib.colors import HexColor
 import matplotlib.pyplot as plt
 
 # Load environment variables
@@ -71,85 +68,12 @@ def add_header_footer(canvas, doc):
     canvas.drawString(40, 15, f"Generado por Outlier. Fecha:{datetime.now().strftime('%Y-%m-%d')} - Página {doc.page}")
     canvas.restoreState()
 
-# Sub-Report 1: AUM Table (your current report)
-def sub_report_aum_table():
-    """Generates a table-based sub-report from report_aum_familia."""
-    elements = []
-    styles = getSampleStyleSheet()
-
-    # Query database
-    with engine.connect() as connection:
-        query = text("""
-            SELECT fecha_imputada AS FECHA, familia AS FAMILIA, categoria AS CATEGORIA,
-                   "subCategoria" AS "Sub Categoria", patrimonio AS PATRIMONIO, gerente
-            FROM report_aum_familia_2
-            WHERE fecha_imputada = '2025-03-13'
-        """)
-        result = connection.execute(query)
-        data = result.fetchall()
-    
-    # Title with dynamic data
-    fecha_value = str(data[0][0]) if data else "N/A"
-    total_aum = sum(float(row[4]) for row in data) / 1e6 if data else 0
-    title = Paragraph(f"AUM por Fondo - Fecha: {fecha_value} (Total: {total_aum:,.0f} millones)", styles['Heading2'])
-    elements.append(title)
-    elements.append(Spacer(1, 10))
-
-    # Table setup
-    column_names = ["FAMILIA", "CATEGORIA", "SUB CATEGORIA", "AUM", "SOC. GERENTE"]
-    wrap_style = ParagraphStyle(
-        name='WrapStyle',
-        fontName='MS Sans Serif',
-        fontSize=6,
-        textColor=colors.black,
-        alignment=1,
-        wordWrap='CJK',
-        leading=7
-    )
-
-    table_data = [column_names]
-    for row in data:
-        aum = "{:,.0f}".format(float(row[4]) / 1e6).replace(",", ".")
-        soc_gerente = re.sub(r'\s*[A-Z\.]+$', '', str(row[5])).strip()
-        formatted_row = [
-            Paragraph(str(row[1]), wrap_style),
-            Paragraph(str(row[2]), wrap_style),
-            Paragraph(str(row[3]), wrap_style),
-            Paragraph(aum, wrap_style),
-            Paragraph(soc_gerente, wrap_style)
-        ]
-        table_data.append(formatted_row)
-
-    col_widths = [135, 75, 135, 60, 147]
-    table = Table(table_data, colWidths=col_widths, hAlign='LEFT', repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'MS Sans Serif'),
-        ('FONTSIZE', (0, 0), (-1, 0), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-        ('FONTNAME', (1, 1), (-1, -1), 'MS Sans Serif'),
-        ('FONTSIZE', (0, 1), (-1, -1), 6),
-        ('TOPPADDING', (0, 1), (-1, -1), 0.05),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 0.05),
-        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
-        ('BOX', (0, 0), (-1, -1), 1, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    elements.append(table)
-    elements.append(PageBreak())
-    return elements
-
-def sub_report_efec_subcategoria():
+def sub_report_efec_subcategoria(report_date):
     """Generates a sub-report with net subscription effects by subcategory."""
     elements = []
     styles = getSampleStyleSheet()
 
-    # Query database with dynamic date (using 2025-03-13 as placeholder)
-    report_date = '2025-03-13'  # Will be set by doc.fecha_value later
+    # Query database with dynamic date
     with engine.connect() as connection:
         query = text("""
             SELECT 
@@ -214,32 +138,23 @@ def sub_report_efec_subcategoria():
     print("Efectos Subcategoria: Table added")
     return elements
 
-# # Sub-Report 2: Example with Text and Table
-from reportlab.platypus import Paragraph, Spacer, Table, PageBreak, Image
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-import matplotlib.pyplot as plt
-import os
-import tempfile
-import time
-from datetime import datetime
-
-def sub_report_summary():
+def sub_report_summary(report_date):
     """Generates a sub-report with text, summary table (newest first), and Matplotlib line chart."""
     elements = []
     styles = getSampleStyleSheet()
     q_dias = 20
 
-    # Query database (100 rows, newest first)
+    # Query database (q_dias rows, newest first up to report_date)
     with engine.connect() as connection:
         query = text(f"""
             SELECT fecha_imputada, SUM(patrimonio) / 1e12 AS total_aum
             FROM report_aum_familia_2
+            WHERE fecha_imputada <= :report_date
             GROUP BY fecha_imputada
             ORDER BY fecha_imputada DESC
             LIMIT {q_dias}
         """)
-        result = connection.execute(query)
+        result = connection.execute(query, {"report_date": report_date})
         data = result.fetchall()
 
     if not data:
@@ -288,7 +203,7 @@ def sub_report_summary():
         plt.plot(fechas, aum_values, color='#FF6600', linewidth=1)
         plt.title("AUM Total por Fecha", fontsize=10)
         plt.xlabel("Fecha (MM-DD)", fontsize=8)
-        plt.ylabel("AUM (millones)", fontsize=8)
+        plt.ylabel("AUM (billones)", fontsize=8)
         plt.xticks([fechas[i] for i in range(0, len(fechas), 5)], [f.strftime('%m-%d') for f in fechas[::5]], rotation=45, fontsize=6)
         plt.yticks(fontsize=6)
         plt.grid(True, linestyle='--', alpha=0.7)
@@ -316,7 +231,7 @@ def sub_report_summary():
     elements.append(PageBreak())
     return elements
 
-def generate_multi_report_pdf(output_file, sub_report_functions):
+def generate_multi_report_pdf(output_file, sub_report_functions, report_date):
     """Generate a PDF with multiple sub-reports, handle image cleanup."""
     doc = SimpleDocTemplate(output_file, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=80, bottomMargin=40)
     all_elements = []
@@ -326,7 +241,7 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         report_name = func.__name__.replace('sub_report_', '').replace('_', ' ').title()
         try:
             print(f"Generating sub-report: {report_name}")
-            sub_elements = func()
+            sub_elements = func(report_date)  # Pass report_date to sub-reports
             if sub_elements:
                 all_elements.extend(sub_elements)
                 print(f"{report_name}: Elements added ({len(sub_elements)}): {[type(e).__name__ for e in sub_elements]}")
@@ -375,11 +290,29 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
             except Exception as e:
                 print(f"Failed to clean up {path}: {str(e)}")
 
+def get_report_date():
+    """Get report date from command-line argument or database."""
+    if len(sys.argv) > 1:
+        try:
+            report_date = datetime.strptime(sys.argv[1], '%Y-%m-%d').date().isoformat()
+            print(f"Using report date from argument: {report_date}")
+            return report_date
+        except ValueError:
+            print(f"Invalid date format in argument '{sys.argv[1]}'. Fetching from database.")
+    
+    # Fetch max date from fci_diaria_2
+    with engine.connect() as connection:
+        query = text("SELECT MAX(fecha_imputada) FROM fci_diaria_2")
+        result = connection.execute(query).scalar()
+        report_date = result.isoformat() if result else '2025-03-13'  # Fallback
+        print(f"Using report date from database: {report_date}")
+        return report_date
+
 def main():
+    report_date = get_report_date()
     output_file = f"multi_report_aum_familia_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     sub_reports = [sub_report_efec_subcategoria, sub_report_summary]
-    generate_multi_report_pdf(output_file, sub_reports)
+    generate_multi_report_pdf(output_file, sub_reports, report_date)
 
 if __name__ == "__main__":
     main()
-
