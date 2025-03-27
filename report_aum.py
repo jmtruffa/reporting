@@ -10,7 +10,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Ima
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import matplotlib.pyplot as plt
-import tempfile  # Added here for global use
+import tempfile
 import time
 
 # Load environment variables
@@ -141,10 +141,10 @@ def sub_report_efec_subcategoria(report_date):
     return elements
 
 def sub_report_summary(report_date):
-    """Generates a sub-report with text, summary table (newest first), and Matplotlib line chart."""
+    """Generates a sub-report with text, summary table (newest first), and Matplotlib bar chart."""
     elements = []
     styles = getSampleStyleSheet()
-    q_dias = 10
+    q_dias = 7  # 7 days
 
     # Query database (q_dias rows, newest first up to report_date)
     with engine.connect() as connection:
@@ -193,22 +193,26 @@ def sub_report_summary(report_date):
     elements.append(Spacer(1, 20))
     print("Summary: Table added")
 
-    # Matplotlib line chart
+    # Matplotlib bar chart
     try:
         # Reverse data for chart (oldest first)
         fechas = [datetime.strptime(str(row[0]), '%Y-%m-%d') for row in data[::-1]]
         aum_values = [float(row[1]) for row in data[::-1]]
         print("Sample fechas:", [f.strftime('%m-%d') for f in fechas[:10]])
 
-        # Create plot
+        # Use indices for x-axis to remove gaps
+        x_indices = range(len(fechas))
+
+        # Create bar plot
         plt.figure(figsize=(8, 4))
-        plt.plot(fechas, aum_values, color='#FF6600', linewidth=1)
+        plt.bar(x_indices, aum_values, color='#FF6600', width=0.8)
         plt.title("AUM Total por Fecha", fontsize=10)
         plt.xlabel("Fecha (MM-DD)", fontsize=8)
         plt.ylabel("AUM (billones)", fontsize=8)
-        plt.xticks([fechas[i] for i in range(0, len(fechas), 5)], [f.strftime('%m-%d') for f in fechas[::5]], rotation=45, fontsize=6)
+        plt.xticks(x_indices, [f.strftime('%m-%d') for f in fechas], rotation=45, fontsize=6)  # Label with dates
         plt.yticks(fontsize=6)
-        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.ylim(0, max(aum_values) * 1.5)  # Y-axis max = 1.5x max value
+        plt.grid(True, linestyle='--', alpha=0.7, axis='y')  # Grid only on y-axis
         plt.tight_layout()
 
         # Save to temp directory
