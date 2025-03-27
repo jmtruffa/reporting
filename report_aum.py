@@ -12,6 +12,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.lib.colors import HexColor
+import matplotlib.pyplot as plt
 
 # Load environment variables
 db_user = os.environ.get('POSTGRES_USER')
@@ -81,7 +82,7 @@ def sub_report_aum_table():
         query = text("""
             SELECT fecha_imputada AS FECHA, familia AS FAMILIA, categoria AS CATEGORIA,
                    "subCategoria" AS "Sub Categoria", patrimonio AS PATRIMONIO, gerente
-            FROM report_aum_familia
+            FROM report_aum_familia_2
             WHERE fecha_imputada = '2025-03-13'
         """)
         result = connection.execute(query)
@@ -143,26 +144,29 @@ def sub_report_aum_table():
     return elements
 
 # Sub-Report 2: Example with Text and Table
-from reportlab.platypus import Paragraph, Spacer, Table, PageBreak
-from reportlab.graphics.shapes import Drawing
-from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.platypus import Paragraph, Spacer, Table, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.colors import HexColor
+import matplotlib.pyplot as plt
+import os
+import tempfile
+import time
+from datetime import datetime
 
 def sub_report_summary():
-    """Generates a sub-report with text, summary table, and minimal line chart."""
+    """Generates a sub-report with text, summary table (newest first), and Matplotlib line chart."""
     elements = []
     styles = getSampleStyleSheet()
+    q_dias = 20
 
-    # Query database (100 rows)
+    # Query database (100 rows, newest first)
     with engine.connect() as connection:
-        query = text("""
-            SELECT fecha_imputada, SUM(patrimonio) AS total_aum
-            FROM report_aum_familia
+        query = text(f"""
+            SELECT fecha_imputada, SUM(patrimonio) / 1e12 AS total_aum
+            FROM report_aum_familia_2
             GROUP BY fecha_imputada
             ORDER BY fecha_imputada DESC
-            LIMIT 100
+            LIMIT {q_dias}
         """)
         result = connection.execute(query)
         data = result.fetchall()
@@ -175,16 +179,16 @@ def sub_report_summary():
     print("Summary: Fetched", len(data), "rows")
 
     # Text introduction
-    intro = Paragraph("Resumen de AUM por Fecha (Últimos 100 Días)", styles['Heading2'])
+    intro = Paragraph(f"Resumen de AUM por Fecha (Últimos {q_dias} Días)", styles['Heading2'])
     elements.append(intro)
     elements.append(Spacer(1, 10))
     elements.append(Paragraph("A continuación, se presenta un resumen del patrimonio total por fecha, seguido de un gráfico.", styles['Normal']))
     elements.append(Spacer(1, 5))
 
-    # Summary table
-    table_data = [["Fecha", "Total AUM (millones)"]]
+    # Summary table (newest first)
+    table_data = [["Fecha", "Total AUM (billones)"]]
     for row in data:
-        aum = "{:,.0f}".format(float(row[1]) / 1e6).replace(",", ".")
+        aum = "{:,.2f}".format(float(row[1])).replace(",", ".")
         table_data.append([str(row[0]), aum])
     
     table = Table(table_data, colWidths=[200, 200], hAlign='LEFT', repeatRows=1)
@@ -201,30 +205,39 @@ def sub_report_summary():
     elements.append(Spacer(1, 20))
     print("Summary: Table added")
 
-    # Minimal line chart
+    # Matplotlib line chart
     try:
-        drawing = Drawing(500, 200)
-        line_chart = HorizontalLineChart()
-        line_chart.x = 50
-        line_chart.y = 50
-        line_chart.width = 400
-        line_chart.height = 100
+        # Reverse data for chart (oldest first)
+        fechas = [datetime.strptime(str(row[0]), '%Y-%m-%d') for row in data[::-1]]
+        aum_values = [float(row[1]) for row in data[::-1]]
+        print("Sample fechas:", [f.strftime('%m-%d') for f in fechas[:10]])
 
-        # Data
-        chart_data = [[float(row[1]) / 1e6 for row in data]]
-        line_chart.data = chart_data
+        # Create plot
+        plt.figure(figsize=(8, 4))
+        plt.plot(fechas, aum_values, color='#FF6600', linewidth=1)
+        plt.title("AUM Total por Fecha", fontsize=10)
+        plt.xlabel("Fecha (MM-DD)", fontsize=8)
+        plt.ylabel("AUM (millones)", fontsize=8)
+        plt.xticks([fechas[i] for i in range(0, len(fechas), 5)], [f.strftime('%m-%d') for f in fechas[::5]], rotation=45, fontsize=6)
+        plt.yticks(fontsize=6)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
 
-        # Minimal setup
-        line_chart.categoryAxis.visible = False
-        line_chart.valueAxis.valueMin = 0
-        line_chart.valueAxis.labels.fontName = 'MS Sans Serif'
-        line_chart.valueAxis.labels.fontSize = 6
-        line_chart.lines[0].strokeColor = HexColor('#FF6600')
-        line_chart.lines[0].strokeWidth = 1
+        # Save to temp directory
+        temp_dir = tempfile.gettempdir()
+        chart_path = os.path.join(temp_dir, "temp_chart.png")
+        plt.savefig(chart_path, dpi=100, bbox_inches='tight')
+        plt.close()
 
-        drawing.add(line_chart)
-        elements.append(drawing)
-        print("Summary: Chart added")
+        # Verify file exists
+        time.sleep(0.1)  # Ensure file is written
+        if not os.path.exists(chart_path):
+            raise FileNotFoundError(f"Chart file not created: {chart_path}")
+
+        # Add to PDF, don’t delete here
+        elements.append(Image(chart_path, width=400, height=200))
+        print("Summary: Matplotlib chart added (path: %s)" % chart_path)
+
     except Exception as e:
         print(f"Summary: Chart error: {str(e)}")
         elements.append(Paragraph(f"Chart failed: {str(e)}", styles['Normal']))
@@ -233,9 +246,10 @@ def sub_report_summary():
     return elements
 
 def generate_multi_report_pdf(output_file, sub_report_functions):
-    """Generate a PDF with multiple sub-reports."""
+    """Generate a PDF with multiple sub-reports, handle image cleanup."""
     doc = SimpleDocTemplate(output_file, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=80, bottomMargin=40)
     all_elements = []
+    image_paths = []  # Track images to clean up later
 
     for func in sub_report_functions:
         report_name = func.__name__.replace('sub_report_', '').replace('_', ' ').title()
@@ -252,6 +266,9 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
                             doc.fecha_value = fecha_match.group(1)
                             print(f"{report_name}: Set doc.fecha_value to {doc.fecha_value}")
                             break
+                    # Collect image paths
+                    if isinstance(elem, Image):
+                        image_paths.append(elem.filename)
         except Exception as e:
             print(f"Error in sub-report '{report_name}': {str(e)}")
             styles = getSampleStyleSheet()
@@ -266,8 +283,11 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         print(f"Multi-report PDF generated: {output_file}")
     except Exception as e:
         print(f"Error during PDF build: {str(e)}")
-        # Fixed filter: Explicitly include expected types
-        safe_elements = [e for e in all_elements if type(e) in [Paragraph, Table, Spacer, PageBreak]]
+        # Debug filter
+        safe_types = (Paragraph, Table, Spacer, PageBreak, Image)
+        safe_elements = [e for e in all_elements if type(e) in safe_types]
+        print("Safe types:", [t.__name__ for t in safe_types])
+        print("All element types:", [type(e).__name__ for e in all_elements])
         print("Safe elements:", len(safe_elements), [type(e).__name__ for e in safe_elements])
         if safe_elements:
             try:
@@ -277,6 +297,15 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
                 print(f"Minimal build failed: {str(e2)}")
         else:
             print("No safe elements to build PDF")
+
+    # Clean up images after build
+    for path in image_paths:
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+                print(f"Cleaned up: {path}")
+            except Exception as e:
+                print(f"Failed to clean up {path}: {str(e)}")
 
 def main():
     # if len(sys.argv) != 2:
