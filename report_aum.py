@@ -62,7 +62,7 @@ def add_header_footer(canvas, doc):
     canvas.drawImage("./brand_logo.png", 40, 740, width=100, height=45)
     canvas.setFont("MS Sans Serif", 10)
     fecha_value = getattr(doc, 'fecha_value', 'N/A')
-    canvas.drawString(160, 760, f"REPORTE DE AUM POR FONDO (cifras en millones). Información al: {fecha_value}")
+    canvas.drawString(160, 760, f"REPORTE DE FCI. Información al: {fecha_value}")
     canvas.restoreState()
 
     canvas.saveState()
@@ -104,7 +104,7 @@ def sub_report_efec_subcategoria(report_date):
         return elements
 
     # Title
-    title = Paragraph("EFECTOS DE SUSCRIPCION NETOS (en millones):", styles['Heading2'])
+    title = Paragraph("EFECTOS DE SUSCRIPCION NETOS POR SUBCATEGORIA (en millones):", styles['Heading2'])
     elements.append(title)
     elements.append(Spacer(1, 10))
     elements.append(Paragraph(f"Fecha: {report_date}", styles['Normal']))
@@ -167,7 +167,7 @@ def sub_report_summary(report_date):
     print("Summary: Fetched", len(data), "rows")
 
     # Text introduction
-    intro = Paragraph(f"Resumen de AUM por Fecha (Últimos {q_dias} Días)", styles['Heading2'])
+    intro = Paragraph(f"AUM POR FECHA (Últimos {q_dias} Días)", styles['Heading2'])
     elements.append(intro)
     elements.append(Spacer(1, 10))
     elements.append(Paragraph("A continuación, se presenta un resumen del patrimonio total por fecha, seguido de un gráfico.", styles['Normal']))
@@ -314,10 +314,84 @@ def get_report_date():
         print(f"Using report date from database: {report_date}")
         return report_date
 
+def sub_report_efec_categoria(report_date):
+    """Generates a sub-report with net subscription effects by category."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Query database with dynamic date
+    with engine.connect() as connection:
+        query = text("""
+            SELECT 
+                ei.fecha_imputada,
+                cf.categoria,
+                SUM(ROUND(ei.es_1d::numeric / 1e6, 0)) AS es_1d,
+                SUM(ROUND(ei.es_1w::numeric / 1e6, 0)) AS es_1w,
+                SUM(ROUND(ei.es_mtd::numeric / 1e6, 0)) AS es_mtd,
+                SUM(ROUND(ei.es_1m::numeric / 1e6, 0)) AS es_1m,
+                SUM(ROUND(ei.es_3m::numeric / 1e6, 0)) AS es_3m,
+                SUM(ROUND(ei.es_ytd::numeric / 1e6, 0)) AS es_ytd,
+                SUM(ROUND(ei.es_1y::numeric / 1e6, 0)) AS es_1y
+            FROM efectos_intertemp ei
+            JOIN "clasesFCI" cf ON ei.fondo = cf.fondo 
+                AND (ei.fecha_imputada BETWEEN cf.desde AND COALESCE(cf.hasta, CURRENT_DATE))
+            WHERE ei.fecha_imputada = :report_date
+            GROUP BY ei.fecha_imputada, cf.categoria
+            ORDER BY es_1d
+        """)
+        result = connection.execute(query, {"report_date": report_date})
+        data = result.fetchall()
+
+    if not data:
+        elements.append(Paragraph("No data available for Efectos Categoria report.", styles['Normal']))
+        elements.append(PageBreak())
+        return elements
+
+    # Title
+    title = Paragraph("EFECTOS DE SUSCRIPCION NETOS POR CATEGORIA (en millones):", styles['Heading2'])
+    elements.append(title)
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Fecha: {report_date}", styles['Normal']))
+    elements.append(Spacer(1, 5))
+
+    # Table (excluding fecha_imputada)
+    table_data = [["CATEGORIA", "1D", "1SEM", "MTD", "1M", "3M", "YTD", "1Y"]]
+    for row in data:
+        table_data.append([
+            row[1],  # categoria -> CATEGORIA
+            "{:,.0f}".format(row[2]).replace(",", "."),  # es_1d -> 1D
+            "{:,.0f}".format(row[3]).replace(",", "."),  # es_1w -> 1SEM
+            "{:,.0f}".format(row[4]).replace(",", "."),  # es_mtd -> MTD
+            "{:,.0f}".format(row[5]).replace(",", "."),  # es_1m -> 1M
+            "{:,.0f}".format(row[6]).replace(",", "."),  # es_3m -> 3M
+            "{:,.0f}".format(row[7]).replace(",", "."),  # es_ytd -> YTD
+            "{:,.0f}".format(row[8]).replace(",", ".")   # es_1y -> 1Y
+        ])
+    
+    table = Table(table_data, colWidths=[150, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'MS Sans Serif'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    elements.append(table)
+    elements.append(PageBreak())
+    
+    print("Efectos Categoria: Table added")
+    return elements
+
 def main():
     report_date = get_report_date()
     output_file = f"multi_report_aum_familia_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    sub_reports = [sub_report_efec_subcategoria, sub_report_summary]
+    sub_reports = [
+        sub_report_efec_subcategoria,  # First
+        sub_report_efec_categoria,     # Second
+        sub_report_summary             # Third
+    ]
     generate_multi_report_pdf(output_file, sub_reports, report_date)
 
 if __name__ == "__main__":
