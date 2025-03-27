@@ -143,7 +143,78 @@ def sub_report_aum_table():
     elements.append(PageBreak())
     return elements
 
-# Sub-Report 2: Example with Text and Table
+def sub_report_efec_subcategoria():
+    """Generates a sub-report with net subscription effects by subcategory."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Query database with dynamic date (using 2025-03-13 as placeholder)
+    report_date = '2025-03-13'  # Will be set by doc.fecha_value later
+    with engine.connect() as connection:
+        query = text("""
+            SELECT 
+                ei.fecha_imputada,
+                cf."subCategoria",
+                SUM(ROUND(ei.es_1d::numeric / 1e6, 0)) AS es_1d,
+                SUM(ROUND(ei.es_1w::numeric / 1e6, 0)) AS es_1w,
+                SUM(ROUND(ei.es_mtd::numeric / 1e6, 0)) AS es_mtd,
+                SUM(ROUND(ei.es_1m::numeric / 1e6, 0)) AS es_1m,
+                SUM(ROUND(ei.es_3m::numeric / 1e6, 0)) AS es_3m,
+                SUM(ROUND(ei.es_ytd::numeric / 1e6, 0)) AS es_ytd,
+                SUM(ROUND(ei.es_1y::numeric / 1e6, 0)) AS es_1y
+            FROM efectos_intertemp ei
+            JOIN "clasesFCI" cf ON ei.fondo = cf.fondo 
+                AND (ei.fecha_imputada BETWEEN cf.desde AND COALESCE(cf.hasta, CURRENT_DATE))
+            WHERE ei.fecha_imputada = :report_date
+            GROUP BY ei.fecha_imputada, cf."subCategoria"
+            ORDER BY es_1d
+        """)
+        result = connection.execute(query, {"report_date": report_date})
+        data = result.fetchall()
+
+    if not data:
+        elements.append(Paragraph("No data available for Efectos Subcategoria report.", styles['Normal']))
+        elements.append(PageBreak())
+        return elements
+
+    # Title
+    title = Paragraph("EFECTOS DE SUSCRIPCION NETOS (en millones):", styles['Heading2'])
+    elements.append(title)
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Fecha: {report_date}", styles['Normal']))
+    elements.append(Spacer(1, 5))
+
+    # Table
+    table_data = [["SUB-CATEGORIA", "1D", "1SEM", "MTD", "1M", "3M", "YTD", "1Y"]]
+    for row in data:
+        table_data.append([
+            row[1],  # subCategoria
+            "{:,.0f}".format(row[2]).replace(",", "."),  # es_1d
+            "{:,.0f}".format(row[3]).replace(",", "."),  # es_1w
+            "{:,.0f}".format(row[4]).replace(",", "."),  # es_mtd
+            "{:,.0f}".format(row[5]).replace(",", "."),  # es_1m
+            "{:,.0f}".format(row[6]).replace(",", "."),  # es_3m
+            "{:,.0f}".format(row[7]).replace(",", "."),  # es_ytd
+            "{:,.0f}".format(row[8]).replace(",", ".")   # es_1y
+        ])
+    
+    table = Table(table_data, colWidths=[150, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'MS Sans Serif'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+    elements.append(table)
+    elements.append(PageBreak())
+    
+    print("Efectos Subcategoria: Table added")
+    return elements
+
+# # Sub-Report 2: Example with Text and Table
 from reportlab.platypus import Paragraph, Spacer, Table, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
@@ -249,7 +320,7 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
     """Generate a PDF with multiple sub-reports, handle image cleanup."""
     doc = SimpleDocTemplate(output_file, pagesize=letter, leftMargin=30, rightMargin=30, topMargin=80, bottomMargin=40)
     all_elements = []
-    image_paths = []  # Track images to clean up later
+    image_paths = []
 
     for func in sub_report_functions:
         report_name = func.__name__.replace('sub_report_', '').replace('_', ' ').title()
@@ -266,7 +337,6 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
                             doc.fecha_value = fecha_match.group(1)
                             print(f"{report_name}: Set doc.fecha_value to {doc.fecha_value}")
                             break
-                    # Collect image paths
                     if isinstance(elem, Image):
                         image_paths.append(elem.filename)
         except Exception as e:
@@ -283,7 +353,6 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         print(f"Multi-report PDF generated: {output_file}")
     except Exception as e:
         print(f"Error during PDF build: {str(e)}")
-        # Debug filter
         safe_types = (Paragraph, Table, Spacer, PageBreak, Image)
         safe_elements = [e for e in all_elements if type(e) in safe_types]
         print("Safe types:", [t.__name__ for t in safe_types])
@@ -298,7 +367,6 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
         else:
             print("No safe elements to build PDF")
 
-    # Clean up images after build
     for path in image_paths:
         if os.path.exists(path):
             try:
@@ -308,23 +376,8 @@ def generate_multi_report_pdf(output_file, sub_report_functions):
                 print(f"Failed to clean up {path}: {str(e)}")
 
 def main():
-    # if len(sys.argv) != 2:
-    #     print(f"Uso: {sys.argv[0]} /path/to/procedures_file")
-    #     sys.exit(1)
-
-    # procedure_file = sys.argv[1]
-    # procedures = read_procedures_from_file(procedure_file)
-
-    # if not procedures:
-    #     print("No hay procedimientos especificados en el archivo. Saliendo.")
-    #     sys.exit(1)
-
-    # for proc in procedures:
-    #     execute_procedure(engine, proc)
-
-    # List of sub-report functions to include
     output_file = f"multi_report_aum_familia_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    sub_reports = [sub_report_aum_table, sub_report_summary]  # Only Aum Table
+    sub_reports = [sub_report_efec_subcategoria, sub_report_summary]
     generate_multi_report_pdf(output_file, sub_reports)
 
 if __name__ == "__main__":
