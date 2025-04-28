@@ -70,6 +70,54 @@ def add_header_footer(canvas, doc):
     canvas.drawString(40, 15, f"Generado por Outlier. Fecha:{datetime.now().strftime('%Y-%m-%d')} - Página {doc.page}")
     canvas.restoreState()
 
+def sub_report_cover(report_date):
+    """Generates a cover page with a large title and date information, starting a few lines down."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Custom style for the title
+    title_style = ParagraphStyle(
+        name='CoverTitle',
+        parent=styles['Heading1'],
+        fontName='MS Sans Serif',
+        fontSize=36,
+        leading=40,
+        alignment=0,  # Left-aligned
+        spaceAfter=20
+    )
+
+    # Custom style for the date text
+    date_style = ParagraphStyle(
+        name='CoverDate',
+        parent=styles['Normal'],
+        fontName='MS Sans Serif',
+        fontSize=14,
+        leading=18,
+        alignment=0  # Left-aligned
+    )
+
+    # Push title down three lines
+    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 12))
+
+    # Title
+    title = Paragraph("REPORTE INDUSTRIA FCI", title_style)
+    elements.append(title)
+
+    # Three line spaces before date
+    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 12))
+
+    # Date text
+    date_text = Paragraph(f"Datos al {report_date}", date_style)
+    elements.append(date_text)
+    elements.append(PageBreak())
+
+    print("Cover: Title and date added")
+    return elements
+
 def sub_report_efec_gerente(report_date):
     """Generates a sub-report with net subscription effects by gerente."""
     elements = []
@@ -212,12 +260,13 @@ def sub_report_efec_subcategoria(report_date):
     print("Efectos Subcategoria: Table added")
     return elements
 
-def sub_report_summary(report_date):
-    """Generates a sub-report with text, summary table on left, and Matplotlib bar chart on right."""
-    elements = []
-    styles = getSampleStyleSheet()  # Already defined here, but ensure it's available in except block
 
-    # Query database (q_dias rows, newest first up to report_date)
+def sub_report_summary(report_date):
+    """Generates a sub-report with a Matplotlib bar chart of AUM over the last 20 days."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Query database (last 20 rows, newest first up to report_date)
     with engine.connect() as connection:
         query = text("""
             SELECT fecha_imputada, SUM(patrimonio) / 1e12 AS total_aum
@@ -225,7 +274,7 @@ def sub_report_summary(report_date):
             WHERE fecha_imputada <= :report_date
             GROUP BY fecha_imputada
             ORDER BY fecha_imputada DESC
-            LIMIT 7
+            LIMIT 20
         """)
         result = connection.execute(query, {"report_date": report_date})
         data = result.fetchall()
@@ -238,31 +287,13 @@ def sub_report_summary(report_date):
     print("Summary: Fetched", len(data), "rows")
 
     # Text introduction
-    intro = Paragraph("RESUMEN DE AUM POR FECHA: (en billones)", styles['Heading2'])
-    elements.append(intro)
+    #intro = Paragraph("RESUMEN DE AUM POR FECHA: (en billones)", styles['Heading2'])
+    #elements.append(intro)
     elements.append(Spacer(1, 10))
-    elements.append(Paragraph("A continuación, se presenta un resumen del patrimonio total por fecha junto a un gráfico.", styles['Normal']))
+    #elements.append(Paragraph("A continuación, se presenta un gráfico del patrimonio total por fecha.", styles['Normal']))
     elements.append(Spacer(1, 10))
 
-    # Summary table (newest first)
-    table_data = [["Fecha", "Total AUM (billones)"]]
-    for row in data:
-        aum = "{:,.2f}".format(float(row[1])).replace(",", ".")
-        table_data.append([str(row[0]), aum])
-    
-    table = Table(table_data, colWidths=[100, 100], hAlign='LEFT', repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, -1), 'MS Sans Serif'),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
-        ('BOX', (0, 0), (-1, -1), 1, colors.black),
-    ]))
-    print("Summary: Table added")
-
-    # Matplotlib bar chart (no border)
+    # Matplotlib bar chart
     chart_path = None
     try:
         # Reverse data for chart (oldest first)
@@ -274,12 +305,26 @@ def sub_report_summary(report_date):
         x_indices = range(len(fechas))
 
         # Create bar plot
-        plt.figure(figsize=(4, 3))
-        plt.bar(x_indices, aum_values, color='#FF6600', width=0.8)
+        plt.figure(figsize=(8, 4))  # Larger figure since no table
+        bars = plt.bar(x_indices, aum_values, color='#FF6600', width=0.8)
+        plt.title("AUM TOTAL INDUSTRIA FCI", fontsize=10, pad=20)
+        plt.text(0.5, 1.05, "Reexpresado en billones de pesos", 
+                 fontsize=8, ha='center', va='bottom', transform=plt.gca().transAxes)
+        plt.xlabel("Fecha (MM-DD)", fontsize=8)
+        plt.ylabel("Billones de Pesos", fontsize=8)
         plt.xticks(x_indices, [f.strftime('%m-%d') for f in fechas], rotation=45, fontsize=6)
         plt.yticks(fontsize=6)
         plt.ylim(0, max(aum_values) * 1.5)
         plt.grid(True, linestyle='--', alpha=0.7, axis='y')
+
+        # Add values on top of bars (rounded to billions)
+        for bar, value in zip(bars, aum_values):
+            plt.text(
+                bar.get_x() + bar.get_width() / 2,  # Center of bar
+                bar.get_height(),                   # Top of bar
+                f'{round(value, 2)}',               # Rounded to 2 decimals
+                ha='center', va='bottom', fontsize=6
+            )
 
         # Remove border (spines)
         ax = plt.gca()
@@ -293,7 +338,7 @@ def sub_report_summary(report_date):
         # Save to temp directory
         temp_dir = tempfile.gettempdir()
         chart_path = os.path.join(temp_dir, "temp_chart.png")
-        plt.savefig(chart_path, dpi=100, bbox_inches='tight')
+        plt.savefig(chart_path, dpi=300, bbox_inches='tight')
         plt.close()
 
         # Verify file exists
@@ -303,24 +348,19 @@ def sub_report_summary(report_date):
 
         print("Summary: Matplotlib chart added (path: %s)" % chart_path)
 
-        # Combine table and chart side-by-side
-        chart_image = Image(chart_path, width=300, height=150)
-        side_by_side = Table([[table, chart_image]], colWidths=[200, 300], hAlign='CENTER')
-        side_by_side.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ]))
-        elements.append(side_by_side)
+        # Add chart to PDF
+        chart_image = Image(chart_path, width=500, height=250)  # Larger image
+        elements.append(chart_image)
 
     except Exception as e:
         print(f"Summary: Chart error: {str(e)}")
-        # Use the already defined styles here
         elements.append(Paragraph(f"Chart failed: {str(e)}", styles['Normal']))
         elements.append(PageBreak())
         return elements
 
     elements.append(PageBreak())
     return elements
+
 
 def generate_multi_report_pdf(output_file, sub_report_functions, report_date):
     """Generate a PDF with multiple sub-reports, handle image cleanup."""
@@ -473,6 +513,7 @@ def main():
     report_date = get_report_date()
     output_file = f"{report_date.replace('-', '')} reporte fci.pdf"
     sub_reports = [
+        sub_report_cover,               # Page 0: Portada
         sub_report_summary,            # Page 1: RESUMEN DE AUM POR FECHA
         sub_report_efec_categoria,     # Page 2: EFECTOS POR CATEGORIA
         sub_report_efec_subcategoria,  # Page 3: EFECTOS POR SUB-CATEGORIA
