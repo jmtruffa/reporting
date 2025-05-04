@@ -70,6 +70,14 @@ def add_header_footer(canvas, doc):
     canvas.drawString(40, 15, f"Generado por Outlier. Fecha:{datetime.now().strftime('%Y-%m-%d')} - Página {doc.page}")
     canvas.restoreState()
 
+    # === Borde para la portada ===
+    if doc.page == 1:  # solo la primera página (portada)
+        canvas.saveState()
+        canvas.setLineWidth(2)
+        canvas.setStrokeColor(colors.black)
+        canvas.rect(15, 10, 575, 777)  # left, bottom, width, height
+        canvas.restoreState()
+
 def sub_report_cover(report_date):
     """Generates a cover page with a large title and date information, starting a few lines down."""
     elements = []
@@ -136,7 +144,7 @@ def sub_report_efec_gerente(report_date):
                 SUM(ROUND(ei.es_3m::numeric / 1e6, 2)) AS es_3m,
                 SUM(ROUND(ei.es_ytd::numeric / 1e6, 2)) AS es_ytd,
                 SUM(ROUND(ei.es_1y::numeric / 1e6, 2)) AS es_1y
-            FROM efectos_intertemp ei
+            FROM efectos_intertemp_pesos ei
             JOIN "clasesFCI" cf ON ei.fondo = cf.fondo 
                 AND (ei.fecha_imputada BETWEEN cf.desde AND COALESCE(cf.hasta, CURRENT_DATE))
             JOIN fci_diaria_2 fci ON fci.fondo = ei.fondo AND fci.fecha_imputada = ei.fecha_imputada
@@ -174,7 +182,7 @@ def sub_report_efec_gerente(report_date):
             "{:,.2f}".format(row[8]).replace(",", ".")   # es_1y -> 1Y
         ])
     
-    table = Table(table_data, colWidths=[150, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
+    table = Table(table_data, colWidths=[165, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -244,7 +252,7 @@ def sub_report_efec_subcategoria(report_date):
             "{:,.0f}".format(row[8]).replace(",", ".")   # es_1y
         ])
     
-    table = Table(table_data, colWidths=[150, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
+    table = Table(table_data, colWidths=[161, 50, 50, 50, 50, 50, 50, 50], hAlign='LEFT', repeatRows=1)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -261,69 +269,94 @@ def sub_report_efec_subcategoria(report_date):
     return elements
 
 
+
 def sub_report_summary(report_date):
-    """Generates a sub-report with a Matplotlib bar chart of AUM over the last 20 days."""
+    """Generates a sub-report with two Matplotlib bar charts side by side: AUM and Subscriptions."""
     elements = []
     styles = getSampleStyleSheet()
 
-    # Query database (last 20 rows, newest first up to report_date)
+    # Query for AUM (last 6 rows)
     with engine.connect() as connection:
-        query = text("""
+        aum_query = text("""
             SELECT fecha_imputada, SUM(patrimonio) / 1e12 AS total_aum
             FROM report_aum_familia_2
             WHERE fecha_imputada <= :report_date
             GROUP BY fecha_imputada
             ORDER BY fecha_imputada DESC
-            LIMIT 20
+            LIMIT 6
         """)
-        result = connection.execute(query, {"report_date": report_date})
-        data = result.fetchall()
+        aum_result = connection.execute(aum_query, {"report_date": report_date})
+        aum_data = aum_result.fetchall()
 
-    if not data:
-        elements.append(Paragraph("No data available for Summary report.", styles['Normal']))
+    # Query for Subscriptions (last 6 dates)
+    with engine.connect() as connection:
+        sub_query = text("""
+            SELECT 
+                eb.fecha_imputada,
+                SUM(ROUND(eb.es_1d::numeric / 1e6, 0)) AS suscripciones
+            FROM 
+                efectos_base eb
+            WHERE 
+                eb.fecha_imputada IN (
+                    SELECT DISTINCT fecha_imputada
+                    FROM efectos_base_pesos
+                    ORDER BY fecha_imputada DESC
+                    LIMIT 6
+                )
+            GROUP BY 
+                eb.fecha_imputada
+            ORDER BY 
+                eb.fecha_imputada DESC
+        """)
+        sub_result = connection.execute(sub_query)
+        sub_data = sub_result.fetchall()
+
+    if not aum_data:
+        elements.append(Paragraph("No AUM data available for Summary report.", styles['Normal']))
         elements.append(PageBreak())
         return elements
 
-    print("Summary: Fetched", len(data), "rows")
+    print("Summary: Fetched AUM", len(aum_data), "rows")
+    print("Summary: Fetched Subscriptions", len(sub_data), "rows")
 
     # Text introduction
-    #intro = Paragraph("RESUMEN DE AUM POR FECHA: (en billones)", styles['Heading2'])
-    #elements.append(intro)
+    # intro = Paragraph("RESUMEN DE AUM POR FECHA: (en billones)", styles['Heading2'])
+    # elements.append(intro)
     elements.append(Spacer(1, 10))
-    #elements.append(Paragraph("A continuación, se presenta un gráfico del patrimonio total por fecha.", styles['Normal']))
     elements.append(Spacer(1, 10))
 
-    # Matplotlib bar chart
-    chart_path = None
+    # First chart: AUM
+    aum_chart_path = None
     try:
         # Reverse data for chart (oldest first)
-        fechas = [datetime.strptime(str(row[0]), '%Y-%m-%d') for row in data[::-1]]
-        aum_values = [float(row[1]) for row in data[::-1]]
-        print("Sample fechas:", [f.strftime('%m-%d') for f in fechas[:10]])
+        aum_fechas = [datetime.strptime(str(row[0]), '%Y-%m-%d') for row in aum_data[::-1]]
+        aum_values = [float(row[1]) for row in aum_data[::-1]]
+        print("AUM Sample fechas:", [f.strftime('%m-%d') for f in aum_fechas[:10]])
 
         # Use indices for x-axis to remove gaps
-        x_indices = range(len(fechas))
+        aum_indices = range(len(aum_fechas))
 
         # Create bar plot
-        plt.figure(figsize=(8, 4))  # Larger figure since no table
-        bars = plt.bar(x_indices, aum_values, color='#FF6600', width=0.8)
-        plt.title("AUM TOTAL INDUSTRIA FCI", fontsize=10, pad=20)
-        plt.text(0.5, 1.05, "Reexpresado en billones de pesos", 
-                 fontsize=8, ha='center', va='bottom', transform=plt.gca().transAxes)
-        plt.xlabel("Fecha (MM-DD)", fontsize=8)
-        plt.ylabel("Billones de Pesos", fontsize=8)
-        plt.xticks(x_indices, [f.strftime('%m-%d') for f in fechas], rotation=45, fontsize=6)
-        plt.yticks(fontsize=6)
+        plt.figure(figsize=(4, 4))
+        aum_bars = plt.bar(aum_indices, aum_values, color='#FF6600', width=0.4)
+        plt.title("AUM TOTAL INDUSTRIA FCI", fontsize=8, pad=20)  # Increased pad
+        plt.text(0.5, 1.03, "Reexpresado en billones de pesos",  # Lowered y position
+                 fontsize=6, ha='center', va='bottom', transform=plt.gca().transAxes)
+        plt.xlabel("Fecha", fontsize=6)  # Removed (MM-DD)
+        plt.ylabel("Billones de Pesos", fontsize=6)
+        plt.xticks(aum_indices, [f.strftime('%m-%d') for f in aum_fechas], rotation=45, fontsize=5)
+        plt.yticks(fontsize=5)
         plt.ylim(0, max(aum_values) * 1.5)
+        plt.axhline(y=0, color='black', linewidth=1)  # Horizontal line at y=0
         plt.grid(True, linestyle='--', alpha=0.7, axis='y')
 
-        # Add values on top of bars (rounded to billions)
-        for bar, value in zip(bars, aum_values):
+        # Add values on top of bars
+        for bar, value in zip(aum_bars, aum_values):
             plt.text(
-                bar.get_x() + bar.get_width() / 2,  # Center of bar
-                bar.get_height(),                   # Top of bar
-                f'{round(value, 2)}',               # Rounded to 2 decimals
-                ha='center', va='bottom', fontsize=6
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                f'{round(value, 2)}',
+                ha='center', va='bottom', fontsize=5
             )
 
         # Remove border (spines)
@@ -337,29 +370,116 @@ def sub_report_summary(report_date):
 
         # Save to temp directory
         temp_dir = tempfile.gettempdir()
-        chart_path = os.path.join(temp_dir, "temp_chart.png")
-        plt.savefig(chart_path, dpi=300, bbox_inches='tight')
+        aum_chart_path = os.path.join(temp_dir, "aum_chart.png")
+        plt.savefig(aum_chart_path, dpi=300, bbox_inches='tight')
         plt.close()
 
         # Verify file exists
         time.sleep(0.1)
-        if not os.path.exists(chart_path):
-            raise FileNotFoundError(f"Chart file not created: {chart_path}")
+        if not os.path.exists(aum_chart_path):
+            raise FileNotFoundError(f"AUM chart file not created: {aum_chart_path}")
 
-        print("Summary: Matplotlib chart added (path: %s)" % chart_path)
-
-        # Add chart to PDF
-        chart_image = Image(chart_path, width=500, height=250)  # Larger image
-        elements.append(chart_image)
+        print("Summary: AUM chart added (path: %s)" % aum_chart_path)
 
     except Exception as e:
-        print(f"Summary: Chart error: {str(e)}")
-        elements.append(Paragraph(f"Chart failed: {str(e)}", styles['Normal']))
+        print(f"Summary: AUM chart error: {str(e)}")
+        elements.append(Paragraph(f"AUM chart failed: {str(e)}", styles['Normal']))
         elements.append(PageBreak())
         return elements
 
+    # Second chart: Subscriptions
+    sub_chart_path = None
+    if sub_data:
+        try:
+            # Reverse data for chart (oldest first)
+            sub_fechas = [datetime.strptime(str(row[0]), '%Y-%m-%d') for row in sub_data[::-1]]
+            sub_values = [float(row[1]) for row in sub_data[::-1]]
+            print("Subscriptions Sample fechas:", [f.strftime('%m-%d') for f in sub_fechas[:10]])
+
+            # Use indices for x-axis
+            sub_indices = range(len(sub_fechas))
+
+            # Create bar plot
+            plt.figure(figsize=(4, 4))
+            sub_bars = plt.bar(sub_indices, sub_values, color='#FF6600', width=0.4)  # Same orange color
+            plt.title("SUSCRIPCIONES NETAS", fontsize=8, pad=20)  # Increased pad
+            plt.text(0.5, 1.03, "En millones de pesos",  # Lowered y position
+                     fontsize=6, ha='center', va='bottom', transform=plt.gca().transAxes)
+            plt.xlabel("Fecha", fontsize=6)  # Removed (MM-DD)
+            plt.xticks(sub_indices, [f.strftime('%m-%d') for f in sub_fechas], rotation=45, fontsize=5)
+            plt.yticks([])  # Hide y-axis ticks and labels
+            max_val = max(sub_values, default=1) * 1.5
+            min_val = min(sub_values, default=0) * 1.5 if min(sub_values, default=0) < 0 else 0
+            plt.ylim(min_val, max_val)
+            plt.axhline(y=0, color='black', linewidth=1)  # Horizontal line at y=0
+            plt.grid(True, linestyle='--', alpha=0.7, axis='y')
+
+            # Add values on top (positive) or bottom (negative) of bars with thousands separator
+            for bar, value in zip(sub_bars, sub_values):
+                va = 'bottom' if value >= 0 else 'top'
+                offset = 5 if value >= 0 else -5
+                formatted_value = f"{int(value):,}".replace(",", ".")
+                plt.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + offset,
+                    formatted_value,
+                    ha='center', va=va, fontsize=5
+                )
+
+            # Remove border (spines)
+            ax = plt.gca()
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+
+            plt.tight_layout()
+
+            # Save to temp directory
+            sub_chart_path = os.path.join(temp_dir, "sub_chart.png")
+            plt.savefig(sub_chart_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            # Verify file exists
+            time.sleep(0.1)
+            if not os.path.exists(sub_chart_path):
+                raise FileNotFoundError(f"Subscriptions chart file not created: {sub_chart_path}")
+
+            print("Summary: Subscriptions chart added (path: %s)" % sub_chart_path)
+
+        except Exception as e:
+            print(f"Summary: Subscriptions chart error: {str(e)}")
+            elements.append(Paragraph(f"Subscriptions chart failed: {str(e)}", styles['Normal']))
+            elements.append(PageBreak())
+            return elements
+
+    else:
+        elements.append(Paragraph("No Subscriptions data available.", styles['Normal']))
+
+    # Place charts side by side with adjusted left margin
+    if aum_chart_path and sub_chart_path:
+        aum_chart_image = Image(aum_chart_path, width=250, height=250)
+        sub_chart_image = Image(sub_chart_path, width=250, height=250)
+        side_by_side = Table([[aum_chart_image, sub_chart_image]], colWidths=[250, 250])
+        side_by_side.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('LEFTPADDING', (0, 0), (-1, -1), -20),
+        ]))
+        elements.append(side_by_side)
+    elif aum_chart_path:
+        aum_chart_image = Image(aum_chart_path, width=250, height=250)
+        elements.append(aum_chart_image)
+    else:
+        elements.append(Paragraph("No charts generated.", styles['Normal']))
+
     elements.append(PageBreak())
     return elements
+
+
+
+
+
 
 
 def generate_multi_report_pdf(output_file, sub_report_functions, report_date):
@@ -457,7 +577,7 @@ def sub_report_efec_categoria(report_date):
                 SUM(ROUND(ei.es_3m::numeric / 1e6, 0)) AS es_3m,
                 SUM(ROUND(ei.es_ytd::numeric / 1e6, 0)) AS es_ytd,
                 SUM(ROUND(ei.es_1y::numeric / 1e6, 0)) AS es_1y
-            FROM efectos_intertemp ei
+            FROM efectos_intertemp_pesos ei
             JOIN "clasesFCI" cf ON ei.fondo = cf.fondo 
                 AND (ei.fecha_imputada BETWEEN cf.desde AND COALESCE(cf.hasta, CURRENT_DATE))
             WHERE ei.fecha_imputada = :report_date
@@ -509,6 +629,147 @@ def sub_report_efec_categoria(report_date):
     print("Efectos Categoria: Table added")
     return elements
 
+def sub_report_rentabilidades(report_date):
+    """Generates a sub-report with rentability data."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Query database
+    with engine.connect() as connection:
+        query = text("""
+            SELECT fecha_imputada AS fecha, 
+                   fondo,
+                   patrimonio,
+                   categoria,
+                   "subCategoria",
+                   rent_vcp_1d AS "1D",
+                   rent_vcp_wtd AS "WTD",
+                   rent_vcp_mtd AS "MTD",
+                   rent_vcp_1m AS "1M",
+                   rent_vcp_3m AS "3M",
+                   rent_vcp_ytd AS "YTD",
+                   rent_vcp_1y AS "1Y"
+            FROM vista_rentabilidades
+            WHERE fecha_imputada = :report_date
+              AND categoria NOT IN ('?', 'Cáscara', 'Basura')
+            ORDER BY categoria, "subCategoria", "1D", "WTD", "1M"
+        """)
+        result = connection.execute(query, {"report_date": report_date})
+        data = result.fetchall()
+
+    if not data:
+        elements.append(Paragraph("No data available for Rentabilidades report.", styles['Normal']))
+        elements.append(PageBreak())
+        return elements
+
+    # Title
+    title = Paragraph("RENTABILIDADES VCP (en %):", styles['Heading2'])
+    elements.append(title)
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Fecha: {report_date}", styles['Normal']))
+    elements.append(Spacer(1, 5))
+
+    # Table header
+    headers = [
+        "FONDO", "PATRIMONIO", "CATEGORIA", "SUBCATEGORIA",
+        "1D", "WTD", "MTD", "1M", "3M", "YTD", "1Y"
+    ]
+    table_data = [headers]
+
+    for row in data:
+        row_values = [
+            row[1],  # fondo
+            f"{row[2]:,.0f}".replace(",", "."),  # patrimonio
+            row[3],  # categoria
+            row[4],  # subCategoria
+        ] + [f"{r * 100:.3f}%" if r is not None else "" for r in row[5:]]
+        table_data.append(row_values)
+
+    table = Table(
+        table_data,
+        colWidths=[127, 60, 60, 60, 35, 35, 35, 35, 35, 35, 35],
+        hAlign='LEFT',
+        repeatRows=1
+    )
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'MS Sans Serif'),
+        ('FONTSIZE', (0, 0), (-1, -1), 6),
+        ('LEADING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 0.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0.6),
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+
+    elements.append(table)
+    elements.append(PageBreak())
+
+    print("Rentabilidades: Table added")
+    return elements
+
+
+def sub_report_fondos_sin_clasificar(report_date):
+    """Generates a sub-report with funds without classification."""
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Query database for funds without classification
+    with engine.connect() as connection:
+        query = text("""
+            SELECT DISTINCT f.fondo
+            FROM fci_diaria_2 f
+            LEFT JOIN "clasesFCI" c
+                ON f.fondo = c.fondo
+            WHERE c.fondo IS NULL
+                OR c.familia IS NULL
+                OR c.categoria IS NULL
+                OR c."subCategoria" IS NULL;
+        """)
+        result = connection.execute(query)
+        data = result.fetchall()
+
+    if not data:
+        elements.append(Paragraph("No data available for Fondos Sin Clasificar report.", styles['Normal']))
+        elements.append(PageBreak())
+        return elements
+
+    # Title
+    title = Paragraph("FONDOS SIN CLASIFICAR:", styles['Heading2'])
+    elements.append(title)
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Fecha: {report_date}", styles['Normal']))
+    elements.append(Spacer(1, 5))
+
+    # Table (excluding fecha_imputada)
+    table_data = [["FONDO"]]
+    for row in data:
+        table_data.append([
+            row[0],  # fondo -> FONDO
+        ])
+    
+    table = Table(table_data, colWidths=[225], hAlign='LEFT', repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'MS Sans Serif'),
+        ('FONTSIZE', (0, 0), (-1, -1), 6),     # achicamos la fuente
+        ('LEADING', (0, 0), (-1, -1), 6),      # achicamos interlineado
+        ('TOPPADDING', (0,0), (-1,-1), 0.5),     # sin espacio arriba
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0.6),  # sin espacio abajo
+        ('GRID', (0, 0), (-1, -1), 0.25, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+    ]))
+
+    elements.append(table)
+    elements.append(PageBreak())
+
+    print("Fondos Sin Clasificar: Table added")
+    return elements  
+
 def main():
     report_date = get_report_date()
     output_file = f"{report_date.replace('-', '')} reporte fci.pdf"
@@ -517,7 +778,9 @@ def main():
         sub_report_summary,            # Page 1: RESUMEN DE AUM POR FECHA
         sub_report_efec_categoria,     # Page 2: EFECTOS POR CATEGORIA
         sub_report_efec_subcategoria,  # Page 3: EFECTOS POR SUB-CATEGORIA
-        sub_report_efec_gerente       # Page 4: EFECTOS POR GERENTE
+        sub_report_efec_gerente,       # Page 4: EFECTOS POR GERENTE
+        sub_report_rentabilidades,     # Page 5: RENTABILIDADES VCP
+        sub_report_fondos_sin_clasificar # Page 6: FONDOS SIN CLASIFICAR
     ]
     generate_multi_report_pdf(output_file, sub_reports, report_date)
 
